@@ -1,6 +1,7 @@
 package cert_utils
 
 import (
+	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/sha256"
@@ -38,6 +39,19 @@ func CertHash(cert *x509.Certificate) string {
 }
 
 func PubKeyHash(key *ecdsa.PublicKey) (string, error) {
+	//NOTE: This may look weird. We are converting the ecdsa key into an ECDH key,
+	//then getting the hash of that key. Except MarshalPKIXPublicKey output ECDH keys as ECDSA keys.
+	//However, go has a function to convert an ECDSA key to an ECDH key, but not the other way around
+	//and we don't want to duplicate this method body. So, having this method call the ECDH method allows us
+	//to reuse the code.
+	ecdhKey, err := key.ECDH()
+	if err != nil {
+		return "", err
+	}
+	return PubKeyHashECDH(ecdhKey)
+}
+
+func PubKeyHashECDH(key *ecdh.PublicKey) (string, error) {
 	der, err := x509.MarshalPKIXPublicKey(key)
 	if err != nil {
 		return "", err
@@ -78,7 +92,7 @@ func PemFromPubKey(pub *ecdsa.PublicKey) (string, error) {
 	})), nil
 }
 
-func GetEncryptionTargetKey(cert *x509.Certificate) (*ecdsa.PublicKey, error) {
+func GetEncryptionTargetKey(cert *x509.Certificate) (*ecdh.PublicKey, error) {
 	for _, ext := range cert.Extensions {
 		if ext.Id.Equal(EncryptionTargetKeyExtensionOID) {
 			pubAny, err := x509.ParsePKIXPublicKey(ext.Value)
@@ -98,7 +112,7 @@ func GetEncryptionTargetKey(cert *x509.Certificate) (*ecdsa.PublicKey, error) {
 	return nil, errors.New("no extension present")
 }
 
-func AddEncryptionTargetKey(cert *x509.Certificate, key *ecdsa.PublicKey) error {
+func AddEncryptionTargetKey(cert *x509.Certificate, key *ecdh.PublicKey) error {
 	derBytes, err := x509.MarshalPKIXPublicKey(key)
 	if err != nil {
 		return err
