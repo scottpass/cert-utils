@@ -83,19 +83,19 @@ func GetEncryptionTargetKey(cert *x509.Certificate) (*ecdsa.PublicKey, error) {
 		if ext.Id.Equal(EncryptionTargetKeyExtensionOID) {
 			pubAny, err := x509.ParsePKIXPublicKey(ext.Value)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("unable to parse key: %v", err)
 			}
 			ret, ok := pubAny.(*ecdsa.PublicKey)
 			if !ok {
-				return nil, errors.New("encryption target key is not an ECC key")
+				return nil, errors.New("key is not an ECC key")
 			}
 			if ret.Curve != elliptic.P256() {
-				return nil, errors.New("encryption target key does not use the P256 curve")
+				return nil, errors.New("key does not use the P256 curve")
 			}
 			return ret, nil
 		}
 	}
-	return nil, errors.New("cert is missing the encryption target key extension")
+	return nil, errors.New("no extension present")
 }
 
 func AddEncryptionTargetKey(cert *x509.Certificate, key *ecdsa.PublicKey) error {
