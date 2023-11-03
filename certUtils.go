@@ -106,7 +106,7 @@ func GetEncryptionTargetKey(cert *x509.Certificate) (*ecdh.PublicKey, error) {
 			if ret.Curve != elliptic.P256() {
 				return nil, errors.New("key does not use the P256 curve")
 			}
-			return ret, nil
+			return ret.ECDH()
 		}
 	}
 	return nil, errors.New("no extension present")
