@@ -114,3 +114,14 @@ func AddEncryptionTargetKey(cert *x509.Certificate, key *ecdsa.PublicKey) error 
 	)
 	return nil
 }
+
+func UniqueHashes(hashes ...string) bool {
+	seen := make(map[string]bool)
+	for _, hash := range hashes {
+		if seen[hash] {
+			return false
+		}
+		seen[hash] = true
+	}
+	return true
+}
