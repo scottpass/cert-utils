@@ -167,7 +167,7 @@ func GenerateSerial() (*big.Int, error) {
 	return serial, nil
 }
 
-func CreateCACert(accountID string, pub *ecdsa.PublicKey, priv crypto.Signer, now time.Time) (*x509.Certificate, error) {
+func CreateCACertTemplate(accountID string, now time.Time) (*x509.Certificate, error) {
 	serial, err := GenerateSerial()
 	if err != nil {
 		return nil, err
@@ -197,20 +197,27 @@ func CreateCACert(accountID string, pub *ecdsa.PublicKey, priv crypto.Signer, no
 			CommonName: accountID,
 		},
 	}
-	certBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, pub, priv)
+
+	return &template, nil
+}
+
+func CreateCACert(accountID string, pub *ecdsa.PublicKey, priv crypto.Signer, now time.Time) (*x509.Certificate, error) {
+	template, err := CreateCACertTemplate(accountID, now)
+	if err != nil {
+		return nil, err
+	}
+	certBytes, err := x509.CreateCertificate(rand.Reader, template, template, pub, priv)
 	if err != nil {
 		return nil, err
 	}
 	return x509.ParseCertificate(certBytes)
 }
 
-func CreateDeviceCert(
+func CreateDeviceCertTemplate(
 	caCert *x509.Certificate,
-	caSigner crypto.Signer,
 	accountID string,
 	deviceName string,
 	baseUrl *url.URL,
-	pub *ecdsa.PublicKey,
 	pubEncryption *ecdh.PublicKey,
 	now time.Time,
 ) (*x509.Certificate, error) {
@@ -228,7 +235,7 @@ func CreateDeviceCert(
 		return nil, err
 	}
 
-	template := x509.Certificate{
+	ret := &x509.Certificate{
 		BasicConstraintsValid: true,
 		IsCA:                  false,
 		IssuingCertificateURL: []string{
@@ -251,12 +258,30 @@ func CreateDeviceCert(
 		},
 	}
 
-	err = AddEncryptionTargetKey(&template, pubEncryption)
+	err = AddEncryptionTargetKey(ret, pubEncryption)
+	if err != nil {
+		return nil, err
+	}
+	return ret, nil
+}
+
+func CreateDeviceCert(
+	caCert *x509.Certificate,
+	caSigner crypto.Signer,
+	accountID string,
+	deviceName string,
+	baseUrl *url.URL,
+	pub *ecdsa.PublicKey,
+	pubEncryption *ecdh.PublicKey,
+	now time.Time,
+) (*x509.Certificate, error) {
+
+	template, err := CreateDeviceCertTemplate(caCert, accountID, deviceName, baseUrl, pubEncryption, now)
 	if err != nil {
 		return nil, err
 	}
 
-	cert, err := x509.CreateCertificate(rand.Reader, &template, caCert, pub, caSigner)
+	cert, err := x509.CreateCertificate(rand.Reader, template, caCert, pub, caSigner)
 	if err != nil {
 		return nil, err
 	}
