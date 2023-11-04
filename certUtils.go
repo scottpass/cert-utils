@@ -245,6 +245,10 @@ func CreateDeviceCert(
 		URIs: []*url.URL{
 			spUriSan,
 		},
+		ExtKeyUsage: []x509.ExtKeyUsage{
+			x509.ExtKeyUsageServerAuth,
+			x509.ExtKeyUsageClientAuth,
+		},
 	}
 
 	err = AddEncryptionTargetKey(&template, pubEncryption)
