@@ -1,9 +1,11 @@
 package cert_utils
 
 import (
+	"crypto"
 	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -11,6 +13,11 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"math/big"
+	"net"
+	"net/url"
+	"path"
+	"time"
 )
 
 var EncryptionTargetKeyExtensionOID = []int{1, 3, 9942, 1, 1}
@@ -138,4 +145,115 @@ func UniqueHashes(hashes ...string) bool {
 		seen[hash] = true
 	}
 	return true
+}
+
+// GenerateSerial generates a random serial number for a certificate, using 126s bit of entropy.
+// 16 bytes are generated and interpreted as a big-endian integer. The left most bit is awlays set to 0, and the second
+// left most bit is always set to 1. This ensures the number is not negative and that the leading octet is not 0. The
+// X509 spec requires that the serial not be negative and that if the lading octet is 0 that it be truncated.  By
+// fixing the first 2 bits, we maintain 126 bits of entropy.
+func GenerateSerial() (*big.Int, error) {
+	var bytes [16]byte
+	_, err := rand.Read(bytes[:])
+	if err != nil {
+		return nil, err
+	}
+
+	bytes[0] &= 0x7f
+	bytes[0] |= 0x40
+
+	serial := big.NewInt(0)
+	serial.SetBytes(bytes[:])
+	return serial, nil
+}
+
+func CreateCACert(accountID string, pub *ecdsa.PublicKey, priv crypto.Signer, now time.Time) (*x509.Certificate, error) {
+	serial, err := GenerateSerial()
+	if err != nil {
+		return nil, err
+	}
+
+	template := x509.Certificate{
+		BasicConstraintsValid:  true,
+		ExcludedDNSDomains:     []string{"."},
+		ExcludedEmailAddresses: []string{"."},
+		ExcludedIPRanges: []*net.IPNet{
+			{
+				IP:   net.IPv4(0, 0, 0, 0),
+				Mask: net.IPv4Mask(0, 0, 0, 0),
+			},
+		},
+		PermittedURIDomains: []string{accountID},
+		IsCA:                true,
+		KeyUsage:            x509.KeyUsageDigitalSignature | x509.KeyUsageCRLSign | x509.KeyUsageCertSign,
+		MaxPathLen:          0,
+		MaxPathLenZero:      true,
+		NotBefore:           now,
+		NotAfter:            now.Add(time.Hour * 24 * 30 * 18),
+		SerialNumber:        serial,
+		SignatureAlgorithm:  x509.ECDSAWithSHA256,
+		Subject: pkix.Name{
+			CommonName: accountID,
+		},
+	}
+	certBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, pub, priv)
+	if err != nil {
+		return nil, err
+	}
+	return x509.ParseCertificate(certBytes)
+}
+
+func CreateDeviceCert(
+	caCert *x509.Certificate,
+	caSigner crypto.Signer,
+	accountID string,
+	deviceName string,
+	baseUrl *url.URL,
+	pub *ecdsa.PublicKey,
+	pubEncryption *ecdh.PublicKey,
+	now time.Time,
+) (*x509.Certificate, error) {
+	serial, err := GenerateSerial()
+	if err != nil {
+		return nil, err
+	}
+
+	ocspUrl := *baseUrl
+	ocspUrl.Path = path.Join(ocspUrl.Path, "v1", "ocsp")
+	issuerUrl := *baseUrl
+	issuerUrl.Path = path.Join(issuerUrl.Path, "v1", "accounts", url.PathEscape(accountID), "cas", CertHash(caCert))
+	spUriSan, err := url.Parse(fmt.Sprintf("sp://%v/%v", url.PathEscape(accountID), url.PathEscape(deviceName)))
+	if err != nil {
+		return nil, err
+	}
+
+	template := x509.Certificate{
+		BasicConstraintsValid: true,
+		IsCA:                  false,
+		IssuingCertificateURL: []string{
+			issuerUrl.String(),
+		},
+		KeyUsage:  x509.KeyUsageDigitalSignature,
+		NotBefore: now,
+		NotAfter:  now.Add(time.Hour * 24 * 30 * 3),
+		OCSPServer: []string{
+			ocspUrl.String(),
+		},
+		SerialNumber:       serial,
+		SignatureAlgorithm: x509.ECDSAWithSHA256,
+		URIs: []*url.URL{
+			spUriSan,
+		},
+	}
+
+	err = AddEncryptionTargetKey(&template, pubEncryption)
+	if err != nil {
+		return nil, err
+	}
+
+	cert, err := x509.CreateCertificate(rand.Reader, &template, caCert, pub, caSigner)
+	if err != nil {
+		return nil, err
+	}
+	return x509.ParseCertificate(cert)
 }
