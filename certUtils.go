@@ -167,7 +167,14 @@ func GenerateSerial() (*big.Int, error) {
 	return serial, nil
 }
 
-func CreateCACertTemplate(accountID string, now time.Time) (*x509.Certificate, error) {
+type CACertParams struct {
+	AccountID string
+	CAPub     *ecdsa.PublicKey
+	CASigner  crypto.Signer
+	Now       time.Time
+}
+
+func CreateCACertTemplate(p *CACertParams) (*x509.Certificate, error) {
 	serial, err := GenerateSerial()
 	if err != nil {
 		return nil, err
@@ -183,54 +190,58 @@ func CreateCACertTemplate(accountID string, now time.Time) (*x509.Certificate, e
 				Mask: net.IPv4Mask(0, 0, 0, 0),
 			},
 		},
-		PermittedURIDomains:         []string{accountID},
+		PermittedURIDomains:         []string{p.AccountID},
 		PermittedDNSDomainsCritical: true,
 		IsCA:                        true,
 		KeyUsage:                    x509.KeyUsageDigitalSignature | x509.KeyUsageCRLSign | x509.KeyUsageCertSign,
 		MaxPathLen:                  0,
 		MaxPathLenZero:              true,
-		NotBefore:                   now,
-		NotAfter:                    now.Add(time.Hour * 24 * 30 * 18),
+		NotBefore:                   p.Now,
+		NotAfter:                    p.Now.Add(time.Hour * 24 * 30 * 18),
 		SerialNumber:                serial,
 		SignatureAlgorithm:          x509.ECDSAWithSHA256,
 		Subject: pkix.Name{
-			CommonName: accountID,
+			CommonName: p.AccountID,
 		},
 	}
 
 	return &template, nil
 }
 
-func CreateCACert(accountID string, pub *ecdsa.PublicKey, priv crypto.Signer, now time.Time) (*x509.Certificate, error) {
-	template, err := CreateCACertTemplate(accountID, now)
+func CreateCACert(p *CACertParams) (*x509.Certificate, error) {
+	template, err := CreateCACertTemplate(p)
 	if err != nil {
 		return nil, err
 	}
-	certBytes, err := x509.CreateCertificate(rand.Reader, template, template, pub, priv)
+	certBytes, err := x509.CreateCertificate(rand.Reader, template, template, p.CAPub, p.CASigner)
 	if err != nil {
 		return nil, err
 	}
 	return x509.ParseCertificate(certBytes)
 }
 
-func CreateDeviceCertTemplate(
-	caCert *x509.Certificate,
-	accountID string,
-	deviceName string,
-	baseUrl *url.URL,
-	pubEncryption *ecdh.PublicKey,
-	now time.Time,
-) (*x509.Certificate, error) {
+type DeviceCertParams struct {
+	CACert        *x509.Certificate
+	CASigner      crypto.Signer
+	AccountID     string
+	DeviceName    string
+	BaseUrl       *url.URL
+	DevicePub     *ecdsa.PublicKey
+	EncryptionPub *ecdh.PublicKey
+	Now           time.Time
+}
+
+func CreateDeviceCertTemplate(p *DeviceCertParams) (*x509.Certificate, error) {
 	serial, err := GenerateSerial()
 	if err != nil {
 		return nil, err
 	}
 
-	ocspUrl := *baseUrl
+	ocspUrl := *p.BaseUrl
 	ocspUrl.Path = path.Join(ocspUrl.Path, "v1", "ocsp")
-	issuerUrl := *baseUrl
-	issuerUrl.Path = path.Join(issuerUrl.Path, "v1", "accounts", url.PathEscape(accountID), "cas", CertHash(caCert))
-	spUriSan, err := url.Parse(fmt.Sprintf("sp://%v/%v", url.PathEscape(accountID), url.PathEscape(deviceName)))
+	issuerUrl := *p.BaseUrl
+	issuerUrl.Path = path.Join(issuerUrl.Path, "v1", "accounts", url.PathEscape(p.AccountID), "cas", CertHash(p.CACert))
+	spUriSan, err := url.Parse(fmt.Sprintf("sp://%v/%v", url.PathEscape(p.AccountID), url.PathEscape(p.DeviceName)))
 	if err != nil {
 		return nil, err
 	}
@@ -242,8 +253,8 @@ func CreateDeviceCertTemplate(
 			issuerUrl.String(),
 		},
 		KeyUsage:  x509.KeyUsageDigitalSignature,
-		NotBefore: now,
-		NotAfter:  now.Add(time.Hour * 24 * 30 * 3),
+		NotBefore: p.Now,
+		NotAfter:  p.Now.Add(time.Hour * 24 * 30 * 3),
 		OCSPServer: []string{
 			ocspUrl.String(),
 		},
@@ -258,30 +269,20 @@ func CreateDeviceCertTemplate(
 		},
 	}
 
-	err = AddEncryptionTargetKey(ret, pubEncryption)
+	err = AddEncryptionTargetKey(ret, p.EncryptionPub)
 	if err != nil {
 		return nil, err
 	}
 	return ret, nil
 }
 
-func CreateDeviceCert(
-	caCert *x509.Certificate,
-	caSigner crypto.Signer,
-	accountID string,
-	deviceName string,
-	baseUrl *url.URL,
-	pub *ecdsa.PublicKey,
-	pubEncryption *ecdh.PublicKey,
-	now time.Time,
-) (*x509.Certificate, error) {
-
-	template, err := CreateDeviceCertTemplate(caCert, accountID, deviceName, baseUrl, pubEncryption, now)
+func CreateDeviceCert(p *DeviceCertParams) (*x509.Certificate, error) {
+	template, err := CreateDeviceCertTemplate(p)
 	if err != nil {
 		return nil, err
 	}
 
-	cert, err := x509.CreateCertificate(rand.Reader, template, caCert, pub, caSigner)
+	cert, err := x509.CreateCertificate(rand.Reader, template, p.CACert, p.DevicePub, p.CASigner)
 	if err != nil {
 		return nil, err
 	}
