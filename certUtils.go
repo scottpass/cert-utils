@@ -2,7 +2,6 @@ package cert_utils
 
 import (
 	"crypto"
-	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -50,20 +49,6 @@ func CertHash(cert *x509.Certificate) string {
 
 // PubKeyHash returns the SHA256 hash of a public key's DER encoding
 func PubKeyHash(key *ecdsa.PublicKey) (string, error) {
-	//NOTE: This may look weird. We are converting the ecdsa key into an ECDH key,
-	//then getting the hash of that key. Except MarshalPKIXPublicKey output ECDH keys as ECDSA keys.
-	//However, go has a function to convert an ECDSA key to an ECDH key, but not the other way around
-	//and we don't want to duplicate this method body. So, having this method call the ECDH method allows us
-	//to reuse the code.
-	ecdhKey, err := key.ECDH()
-	if err != nil {
-		return "", err
-	}
-	return PubKeyHashECDH(ecdhKey)
-}
-
-// PubKeyHashECDH returns the SHA256 hash of a public key's DER encoding
-func PubKeyHashECDH(key *ecdh.PublicKey) (string, error) {
 	der, err := x509.MarshalPKIXPublicKey(key)
 	if err != nil {
 		return "", err
