@@ -22,6 +22,7 @@ import (
 
 var EncryptionTargetKeyExtensionOID = []int{1, 3, 9942, 1, 1}
 
+// CertToPem converts a certificate to a PEM encoded string
 func CertToPem(cert *x509.Certificate) string {
 	return string(pem.EncodeToMemory(&pem.Block{
 		Type:  "CERTIFICATE",
@@ -29,6 +30,7 @@ func CertToPem(cert *x509.Certificate) string {
 	}))
 }
 
+// PemToCert converts a PEM encoded string to a certificate
 func PemToCert(s string) (*x509.Certificate, error) {
 	block, _ := pem.Decode([]byte(s))
 	if block == nil {
@@ -40,11 +42,13 @@ func PemToCert(s string) (*x509.Certificate, error) {
 	return x509.ParseCertificate(block.Bytes)
 }
 
+// CertHash returns the SHA256 hash of a certificate's DER encoding
 func CertHash(cert *x509.Certificate) string {
 	sha := sha256.Sum256(cert.Raw)
 	return hex.EncodeToString(sha[:])
 }
 
+// PubKeyHash returns the SHA256 hash of a public key's DER encoding
 func PubKeyHash(key *ecdsa.PublicKey) (string, error) {
 	//NOTE: This may look weird. We are converting the ecdsa key into an ECDH key,
 	//then getting the hash of that key. Except MarshalPKIXPublicKey output ECDH keys as ECDSA keys.
@@ -58,6 +62,7 @@ func PubKeyHash(key *ecdsa.PublicKey) (string, error) {
 	return PubKeyHashECDH(ecdhKey)
 }
 
+// PubKeyHashECDH returns the SHA256 hash of a public key's DER encoding
 func PubKeyHashECDH(key *ecdh.PublicKey) (string, error) {
 	der, err := x509.MarshalPKIXPublicKey(key)
 	if err != nil {
@@ -67,6 +72,7 @@ func PubKeyHashECDH(key *ecdh.PublicKey) (string, error) {
 	return hex.EncodeToString(sha[:]), nil
 }
 
+// PubKeyFromPEM converts a PEM encoded public key to an ECDSA public key
 func PubKeyFromPEM(s string) (*ecdsa.PublicKey, error) {
 	block, _ := pem.Decode([]byte(s))
 	if block == nil {
@@ -87,6 +93,7 @@ func PubKeyFromPEM(s string) (*ecdsa.PublicKey, error) {
 	return ret, nil
 }
 
+// PemFromPubKey converts an ECDSA public key to a PEM encoded string
 func PemFromPubKey(pub *ecdsa.PublicKey) (string, error) {
 	der, err := x509.MarshalPKIXPublicKey(pub)
 	if err != nil {
@@ -99,7 +106,9 @@ func PemFromPubKey(pub *ecdsa.PublicKey) (string, error) {
 	})), nil
 }
 
-func GetEncryptionTargetKey(cert *x509.Certificate) (*ecdh.PublicKey, error) {
+// GetEncryptionTargetKey returns the key encoded in the Scott Pass EncryptionTargetKey extension attached to a cert
+// or an error if no such extension is present.
+func GetEncryptionTargetKey(cert *x509.Certificate) (*ecdsa.PublicKey, error) {
 	for _, ext := range cert.Extensions {
 		if ext.Id.Equal(EncryptionTargetKeyExtensionOID) {
 			pubAny, err := x509.ParsePKIXPublicKey(ext.Value)
@@ -113,20 +122,21 @@ func GetEncryptionTargetKey(cert *x509.Certificate) (*ecdh.PublicKey, error) {
 			if ret.Curve != elliptic.P256() {
 				return nil, errors.New("key does not use the P256 curve")
 			}
-			return ret.ECDH()
+			return ret, nil
 		}
 	}
 	return nil, errors.New("no extension present")
 }
 
-func AddEncryptionTargetKey(cert *x509.Certificate, key *ecdh.PublicKey) error {
+// AddEncryptionTargetKey adds a Scott Pass EncryptionTargetKey extension to a certificate template.
+func AddEncryptionTargetKey(template *x509.Certificate, key *ecdsa.PublicKey) error {
 	derBytes, err := x509.MarshalPKIXPublicKey(key)
 	if err != nil {
 		return err
 	}
 
-	cert.ExtraExtensions = append(
-		cert.ExtraExtensions,
+	template.ExtraExtensions = append(
+		template.ExtraExtensions,
 		pkix.Extension{
 			Id:       EncryptionTargetKeyExtensionOID,
 			Critical: false,
@@ -148,10 +158,6 @@ func UniqueHashes(hashes ...string) bool {
 }
 
 // GenerateSerial generates a random serial number for a certificate, using 126s bit of entropy.
-// 16 bytes are generated and interpreted as a big-endian integer. The left most bit is awlays set to 0, and the second
-// left most bit is always set to 1. This ensures the number is not negative and that the leading octet is not 0. The
-// X509 spec requires that the serial not be negative and that if the lading octet is 0 that it be truncated.  By
-// fixing the first 2 bits, we maintain 126 bits of entropy.
 func GenerateSerial() (*big.Int, error) {
 	var bytes [16]byte
 	_, err := rand.Read(bytes[:])
@@ -167,6 +173,7 @@ func GenerateSerial() (*big.Int, error) {
 	return serial, nil
 }
 
+// CreateCACertTemplate creates a template for a CA certificate
 func CreateCACertTemplate(accountID string, now time.Time) (*x509.Certificate, error) {
 	serial, err := GenerateSerial()
 	if err != nil {
@@ -201,6 +208,7 @@ func CreateCACertTemplate(accountID string, now time.Time) (*x509.Certificate, e
 	return &template, nil
 }
 
+// CreateCACert creates a CA certificate
 func CreateCACert(accountID string, pub *ecdsa.PublicKey, priv crypto.Signer, now time.Time) (*x509.Certificate, error) {
 	template, err := CreateCACertTemplate(accountID, now)
 	if err != nil {
@@ -213,12 +221,13 @@ func CreateCACert(accountID string, pub *ecdsa.PublicKey, priv crypto.Signer, no
 	return x509.ParseCertificate(certBytes)
 }
 
+// CreateDeviceCertTemplate creates a template for a device certificate
 func CreateDeviceCertTemplate(
 	caCert *x509.Certificate,
 	accountID string,
 	deviceName string,
 	baseUrl *url.URL,
-	pubEncryption *ecdh.PublicKey,
+	pubEncryption *ecdsa.PublicKey,
 	now time.Time,
 ) (*x509.Certificate, error) {
 	serial, err := GenerateSerial()
@@ -265,6 +274,7 @@ func CreateDeviceCertTemplate(
 	return ret, nil
 }
 
+// CreateDeviceCert creates a device certificate
 func CreateDeviceCert(
 	caCert *x509.Certificate,
 	caSigner crypto.Signer,
@@ -272,7 +282,7 @@ func CreateDeviceCert(
 	deviceName string,
 	baseUrl *url.URL,
 	pub *ecdsa.PublicKey,
-	pubEncryption *ecdh.PublicKey,
+	pubEncryption *ecdsa.PublicKey,
 	now time.Time,
 ) (*x509.Certificate, error) {
 
