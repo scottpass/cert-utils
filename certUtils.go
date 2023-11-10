@@ -23,6 +23,9 @@ var EncryptionTargetKeyExtensionOID = []int{1, 3, 9942, 1, 1}
 
 // CertToPem converts a certificate to a PEM encoded string
 func CertToPem(cert *x509.Certificate) string {
+	if cert == nil {
+		return ""
+	}
 	return string(pem.EncodeToMemory(&pem.Block{
 		Type:  "CERTIFICATE",
 		Bytes: cert.Raw,
@@ -31,6 +34,9 @@ func CertToPem(cert *x509.Certificate) string {
 
 // PemToCert converts a PEM encoded string to a certificate
 func PemToCert(s string) (*x509.Certificate, error) {
+	if s == "" {
+		return nil, nil
+	}
 	block, _ := pem.Decode([]byte(s))
 	if block == nil {
 		return nil, fmt.Errorf("no PEM data found")
