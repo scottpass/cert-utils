@@ -288,3 +288,17 @@ func CreateDeviceCert(
 	}
 	return x509.ParseCertificate(cert)
 }
+
+func VerifyDeviceSignature(ca *x509.Certificate, cert *x509.Certificate, now time.Time) error {
+	pool := x509.NewCertPool()
+	pool.AddCert(ca)
+	_, err := cert.Verify(x509.VerifyOptions{
+		Roots:       pool,
+		CurrentTime: now,
+		KeyUsages: []x509.ExtKeyUsage{
+			x509.ExtKeyUsageClientAuth,
+			x509.ExtKeyUsageServerAuth,
+		},
+	})
+	return err
+}
